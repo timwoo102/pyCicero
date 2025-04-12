@@ -29,10 +29,13 @@ if device == "gpu":
     # import cupy as cp
 
 import logging
-
+logging.basicConfig(
+    format='%(filename)s: %(asctime)s %(levelname)-8s %(message)s',
+    level=logging.INFO,
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 global LOGGER
 LOGGER = logging.getLogger(__name__)
-logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s', level=logging.INFO, datefmt='%Y-%m-%d %H:%M:%S')
 
 def estimate_sf(counts, round_exprs=True, method="mean-geometric-mean-total"):
     if sp.issparse(counts):
@@ -195,7 +198,7 @@ def aggregate_cells(counts, pseudobulk_cell_dict):
     aggregated_counts = M.dot(counts)
     return aggregated_counts
 
-def make_cicero_adata(adata: sc.AnnData, aggregate_layer_key: str = "counts", embedding_key: str = "X_umap", embedding_df: pd.DataFrame = None, max_iterations: int = 5000, seed: int = 0):
+def make_cicero_adata(adata: sc.AnnData, aggregate_layer_key: str = "counts", embedding_key: str = "X_umap", embedding_df: pd.DataFrame = None, max_iterations: int = 5000, seed: int = 0, quiet: bool = True):
     """
         new_adata obs is set to cell center obs
     """
@@ -208,7 +211,7 @@ def make_cicero_adata(adata: sc.AnnData, aggregate_layer_key: str = "counts", em
         embedding_df = pd.DataFrame(adata.obsm[embedding_key])
     
     LOGGER.info("Calculating overlap")
-    pseudobulk_cell_dict = calculate_overlap(embedding_df, seed = seed, max_iterations = max_iterations)
+    pseudobulk_cell_dict = calculate_overlap(embedding_df, seed = seed, max_iterations = max_iterations, quiet=quiet)
     LOGGER.info("Finished calculating overlap")
     
     LOGGER.info("Aggregating Cells")

@@ -8,10 +8,13 @@ from scipy.sparse import issparse
 from inverse_covariance import QuicGraphicalLasso #skggm
 
 import logging
-
+logging.basicConfig(
+    format='%(filename)s: %(asctime)s %(levelname)-8s %(message)s',
+    level=logging.INFO,
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 global LOGGER
 LOGGER = logging.getLogger(__name__)
-logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s', level=logging.INFO, datefmt='%Y-%m-%d %H:%M:%S')
 
 import multiprocessing
 from multiprocessing import Pool
@@ -30,7 +33,6 @@ def run_cicero(cicero_adata):
 
     LOGGER.info("Generating Windows")
     genomic_windows_df = generate_genomic_windows(cicero_adata)
-    LOGGER.info("Finished Generating Windows")
     LOGGER.info("Starting distance_parameter_estimation")
     distance_parameters = estimate_distance_parameter_parallel(cicero_adata, genomic_windows_df)
     LOGGER.info("Finished distance_parameter_estimation")
@@ -145,7 +147,7 @@ def _process_window_distance(window, cicero_adata,
     return distance_param
 
 def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
-                                         window_size=5e5, max_sample_num=100,
+                                         max_sample_num=100,
                                          max_elements_per_window=200,
                                          max_itterations=500, seed=0,
                                          quiet=True,
@@ -153,36 +155,23 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
                                          pairwise_distances_parameters={},
                                          n_cpu = multiprocessing.cpu_count()):
 
-    # Preprocess the index strings, assuming format "chr-start-end" (e.g., "chr-0-1923")
-    temp_df = pd.DataFrame([x.split("-") for x in cicero_adata.var.index])
-    cicero_adata.var["Chromosome"] = temp_df.iloc[:, 0].values
-    cicero_adata.var["Start"] = temp_df.iloc[:, 1].astype(int).values
-    cicero_adata.var["End"] = temp_df.iloc[:, 2].astype(int).values
-
-    # Generate genomic windows using the provided ranges
-    # genomic_windows_df = generate_genomic_windows(genomic_ranges, window_size=window_size)
-    genomic_windows_df = genomic_ranges #temporary switch to just pass the genomic_windows_df directly
-    # Shuffle window indices
     rng = np.random.default_rng(seed)
-    selected_windows = genomic_windows_df.index.values.copy()
+    selected_windows = genomic_ranges.index.values.copy()
     rng.shuffle(selected_windows)
 
     distance_parameters = []
     num_windows = min(len(selected_windows), max_itterations)
     window_indices = selected_windows[:num_windows]
-    windows = genomic_windows_df.iloc[window_indices,].values.tolist()
+    windows = genomic_ranges.iloc[window_indices,].values.tolist()
     
     func = partial(
         _process_window_distance,
-        genomic_windows_df=genomic_windows_df,
         cicero_adata=cicero_adata,
         max_elements_per_window=max_elements_per_window,
         pairwise_distances_parameters=pairwise_distances_parameters,
         find_distance_parameter_parameters=find_distance_parameter_parameters
     )
 
-
-    
     with multiprocessing.Pool(processes=n_cpu) as pool:
         results_iterator = pool.imap_unordered(func, windows, chunksize=10)
         for result in tqdm(results_iterator, total=num_windows, disable=quiet):
@@ -205,12 +194,6 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
                                         quiet=True,
                                         pairwise_distances_parameters = {},
                                         QuicGraphicalLasso_parameters = {"init_method":"cov"}):
-
-    # Preprocess the index strings, assuming format "chr-start-end" (e.g., "chr-0-1923")
-    temp_df = pd.DataFrame([x.split("-") for x in cicero_adata.var.index])
-    cicero_adata.var["Chromosome"] = temp_df.iloc[:, 0].values
-    cicero_adata.var["Start"] = temp_df.iloc[:, 1].astype(int).values
-    cicero_adata.var["End"] = temp_df.iloc[:, 2].astype(int).values
     
     qgl_objs = {}
     correlation_matricies = {}
@@ -305,6 +288,7 @@ def cov2cor(V):
     return r
 
 def get_rho_mat(dist_matrix, distance_parameter, s, xmin = 1000):
+    np.seterr(divide='ignore')
     out = (1 - (xmin / dist_matrix)**s) * distance_parameter
     out[~np.isfinite(out)] = 0
     out[out < 0] = 0
@@ -341,14 +325,7 @@ def estimate_distance_parameter(cicero_adata, genomic_windows_df,
         from cuml.metrics import pairwise_distances
     else:
         from sklearn.metrics import pairwise_distances
-        
-    temp_df = pd.DataFrame(x.split("-") for x in cicero_adata.var.index) #example chr-0-1923
-    cicero_adata.var["Chromosome"] = temp_df.iloc[:,0].values
-    cicero_adata.var["Start"] = temp_df.iloc[:,1].astype(int).values
-    cicero_adata.var["End"] = temp_df.iloc[:,2].astype(int).values
-
-
-    
+      
     rng = np.random.default_rng(seed)
     selected_windows = genomic_windows_df.index.values.copy()
     rng.shuffle(selected_windows)
@@ -452,12 +429,6 @@ def compute_precision_matrices_parallel(cicero_adata, genomic_ranges, distance_p
                                         quiet=True,
                                         pairwise_distances_parameters = {},
                                         QuicGraphicalLasso_parameters = {"init_method":"cov"}):
-
-
-    temp_df = pd.DataFrame([x.split("-") for x in cicero_adata.var.index])
-    cicero_adata.var["Chromosome"] = temp_df.iloc[:, 0].values
-    cicero_adata.var["Start"] = temp_df.iloc[:, 1].astype(int).values
-    cicero_adata.var["End"] = temp_df.iloc[:, 2].astype(int).values
 
     # Generate the genomic windows.
     genomic_windows_df = generate_genomic_windows(genomic_ranges, window_size=window_size)
