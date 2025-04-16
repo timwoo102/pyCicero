@@ -1,7 +1,7 @@
-import pickle
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+import pybedtools
 
 import logging
 logging.basicConfig(
@@ -78,4 +78,49 @@ def annotate_distal_proximal(cons, tss, quiet = True):
     cons.loc[np.abs(cons["Peak2_Closest_TSS"]) < 1000, "Peak2_Distal_Proximal_Annotation"] = "Proximal"
     cons = cons.copy() #?????????????? prevents some view warning 
     cons["Linkage_Type"] = cons["Peak1_Distal_Proximal_Annotation"] + "-to-" + cons["Peak2_Distal_Proximal_Annotation"]
+    return cons
+
+def annotate_peaks_with_genes(df_peaks, df_gene):
+
+    df_peaks = df_peaks.copy()
+    df_peaks['peak_id'] = df_peaks.index
+    
+    bed_peaks = pybedtools.BedTool.from_dataframe(df_peaks[['chr', 'start', 'end', 'peak_id']])
+    bed_gene = pybedtools.BedTool.from_dataframe(df_gene)
+    
+    intersection = bed_peaks.intersect(b=bed_gene, wa=True, wb=True, loj=True)
+    
+    df_intersect = intersection.to_dataframe(names=[
+        'chr_peak', 'start_peak', 'end_peak', 'peak_id',
+        'chr_gene', 'start_gene', 'end_gene', 'gene_name'
+    ])
+    
+
+    def aggregate_genes(series):
+
+        genes = [g for g in series if g != '.' and pd.notnull(g)]
+        if not genes:
+            return None
+
+        return ";".join(sorted(set(genes)))
+    
+    # Group by the unique peak identifier to aggregate gene names without collapsing duplicates in df_peaks.
+    aggregated = df_intersect.groupby('peak_id').agg({
+        'gene_name': aggregate_genes,
+        'chr_peak': 'first',
+        'start_peak': 'first',
+        'end_peak': 'first'
+    }).reset_index()
+
+    return aggregated["gene_name"]
+
+def annotate_genes(cons, genes_df):
+    peak_1_df = cons.loc[:,("Peak1_Chromosome", "Peak1_Start", "Peak1_End")]
+    peak_1_df.columns = ["chr", "start", "end"]
+
+    peak_2_df = cons.loc[:,("Peak2_Chromosome", "Peak2_Start", "Peak2_End")]
+    peak_2_df.columns = ["chr", "start", "end"]
+
+    cons.insert(6, "Peak_1_Gene_Annotation", annotate_peaks_with_genes(peak_1_df, genes_df))
+    cons.insert(13, "Peak_2_Gene_Annotation", annotate_peaks_with_genes(peak_2_df, genes_df))
     return cons
