@@ -137,11 +137,11 @@ def preprocess_cicero(adata: sc.AnnData,
 
 
 #TODO Should make it such that we calculate optimal pseudo centers using modified k-means center approach
-def calculate_overlap(embedding: pd.DataFrame, seed: int = 0, max_iterations: int = 5000, quiet = False):
-    nbrs = NearestNeighbors(n_neighbors=5, algorithm='ball_tree').fit(embedding)
+def calculate_overlap(embedding: pd.DataFrame, k: int = 50, seed: int = 0, max_iterations: int = 5000, quiet = False):
+    nbrs = NearestNeighbors(n_neighbors=k, algorithm='ball_tree').fit(embedding)
     distances, indices = nbrs.kneighbors(embedding)
     
-    LOGGER.info(f"Generating Pseudobulk cicero observations with seed: {seed}")
+    LOGGER.info(f"Generating Pseudobulk cicero observations with seed: {seed} and k: {k}")
     rng = np.random.default_rng(seed)
     nn_map = pd.DataFrame(indices)
     choices = nn_map.index.values
@@ -198,7 +198,7 @@ def aggregate_cells(counts, pseudobulk_cell_dict):
     aggregated_counts = M.dot(counts)
     return aggregated_counts
 
-def make_cicero_adata(adata: sc.AnnData, aggregate_layer_key: str = "counts", embedding_key: str = "X_umap", embedding_df: pd.DataFrame = None, max_iterations: int = 5000, seed: int = 0, quiet: bool = True):
+def make_cicero_adata(adata: sc.AnnData, aggregate_layer_key: str = "counts", embedding_key: str = "X_umap", embedding_df: pd.DataFrame = None, k: int = 50, max_iterations: int = 5000, seed: int = 0, quiet: bool = True):
     """
         new_adata obs is set to cell center obs
     """
@@ -211,14 +211,18 @@ def make_cicero_adata(adata: sc.AnnData, aggregate_layer_key: str = "counts", em
         embedding_df = pd.DataFrame(adata.obsm[embedding_key])
     
     LOGGER.info("Calculating overlap")
-    pseudobulk_cell_dict = calculate_overlap(embedding_df, seed = seed, max_iterations = max_iterations, quiet=quiet)
+    pseudobulk_cell_dict = calculate_overlap(embedding_df, k = k, seed = seed, max_iterations = max_iterations, quiet=quiet)
     LOGGER.info("Finished calculating overlap")
     
     LOGGER.info("Aggregating Cells")
     aggregated_counts = aggregate_cells(adata.layers[aggregate_layer_key], pseudobulk_cell_dict)
     LOGGER.info("Finished Aggregating Cells")
 
-    new_adata = sc.AnnData(X=aggregated_counts, var=adata.var.copy(), obs = adata.obs.iloc[list(pseudobulk_cell_dict.keys()),:])
+    #just going to take the information from the cell centers as the obs ¯\_(ツ)_/¯
+    aggregated_obs = adata.obs.iloc[list(pseudobulk_cell_dict.keys()),:].copy()
+    aggregated_obs["aggregate_obs_names"] = [adata.obs_names[list(indicies)] for indicies in pseudobulk_cell_dict.values()]
+    
+    new_adata = sc.AnnData(X=aggregated_counts, var=adata.var.copy(), obs = aggregated_obs)
     
     return new_adata
 

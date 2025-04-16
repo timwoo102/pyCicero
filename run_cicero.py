@@ -24,19 +24,20 @@ from sklearn.metrics import pairwise_distances
 #=====================MAIN====================================================
 
 def run_cicero(cicero_adata):
-    n_cpu = multiprocessing.cpu_count()
-    LOGGER.info(f"Starting multiprocessing pool for estimate_distance_parameter_parallel with {n_cpu} processes")
-
-    batches = n_cpu
-    indices = np.linspace(0, cicero_adata.n_vars, batches + 1, dtype=int)
-    cicero_adata_batch_subsets = [cicero_adata[:, indices[index]:indices[index + 1]].copy() for index in range(batches)]
 
     LOGGER.info("Generating Windows")
     genomic_windows_df = generate_genomic_windows(cicero_adata)
     LOGGER.info("Starting distance_parameter_estimation")
     distance_parameters = estimate_distance_parameter_parallel(cicero_adata, genomic_windows_df)
     LOGGER.info("Finished distance_parameter_estimation")
+
     LOGGER.info("Starting generate_cicero_models")
+
+    n_cpu = multiprocessing.cpu_count()
+    batches = n_cpu
+    indices = np.linspace(0, cicero_adata.n_vars, batches + 1, dtype=int)
+    cicero_adata_batch_subsets = [cicero_adata[:, indices[index]:indices[index + 1]].copy() for index in range(batches)]
+
     process_subset_with_fixed_param = partial(process_subset, distance_mean=np.mean(distance_parameters))
     with multiprocessing.Pool(processes=n_cpu) as pool:
             LOGGER.info(f"Starting Cicero with {n_cpu} processes")
@@ -126,23 +127,21 @@ def find_distance_parameter(data, distance_matrix,
     return curr_distance_parameter
 
 #Helper for estimate_distance_parameter_parallel
-def _process_window_distance(window, cicero_adata,
+def _process_cicero_adata_window_subset(cicero_adata_window_subset,
                     max_elements_per_window, pairwise_distances_parameters,
                     find_distance_parameter_parameters = {}):
 
-    # Subset the data based on window parameters
-    cicero_subset = subset_cicero_adata_window(cicero_adata, window[0], window[1], window[2])
-    cicero_subset.X = cicero_subset.X.astype(np.int32) #should disable COW which should be faster also disables 
+    sc.pp.filter_cells(cicero_adata_window_subset, min_counts=1)
     
     # Filter out windows with no variables or too many variables
-    if cicero_subset.n_vars == 0 or cicero_subset.n_vars > max_elements_per_window:
+    if cicero_adata_window_subset.n_vars == 0 or cicero_adata_window_subset.n_vars > max_elements_per_window:
         return None
 
     # Compute the distance matrix and extract the distance parameter
-    mean_bp = cicero_subset.var["mean_bp"].values.reshape(-1,1)
+    mean_bp = cicero_adata_window_subset.var["Mean"].values.reshape(-1,1)
     distance_matrix = pairwise_distances(mean_bp, 
                                          **pairwise_distances_parameters)
-    distance_param = find_distance_parameter(cicero_subset.X.T, distance_matrix,
+    distance_param = find_distance_parameter(cicero_adata_window_subset.X.T, distance_matrix,
                                              **find_distance_parameter_parameters)
     return distance_param
 
@@ -150,6 +149,7 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
                                          max_sample_num=100,
                                          max_elements_per_window=200,
                                          max_itterations=500, seed=0,
+                                         dtype = np.int16,
                                          quiet=True,
                                          find_distance_parameter_parameters={},
                                          pairwise_distances_parameters={},
@@ -163,17 +163,21 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
     num_windows = min(len(selected_windows), max_itterations)
     window_indices = selected_windows[:num_windows]
     windows = genomic_ranges.iloc[window_indices,].values.tolist()
-    
+
+    cicero_adata.X = cicero_adata.X.astype(dtype)
+    cicero_adata_window_subsets = [subset_cicero_adata_window(cicero_adata, window[0], window[1], window[2]) for window in tqdm(windows)]
+
     func = partial(
-        _process_window_distance,
-        cicero_adata=cicero_adata,
+        _process_cicero_adata_window_subset,
         max_elements_per_window=max_elements_per_window,
         pairwise_distances_parameters=pairwise_distances_parameters,
         find_distance_parameter_parameters=find_distance_parameter_parameters
     )
-
+    
+    LOGGER.info(f"Starting multiprocessing pool for estimate_distance_parameter_parallel with {n_cpu} processes")
+    chunksize = len(cicero_adata_window_subsets)//n_cpu + 1
     with multiprocessing.Pool(processes=n_cpu) as pool:
-        results_iterator = pool.imap_unordered(func, windows, chunksize=10)
+        results_iterator = pool.imap_unordered(func, cicero_adata_window_subsets, chunksize=chunksize)
         for result in tqdm(results_iterator, total=num_windows, disable=quiet):
             if result is not None:
                 distance_parameters.append(result)
@@ -189,7 +193,6 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
 
 def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
                                         s = 0.75,
-                                        window_size=5e5,
                                         max_elements_per_window = 200,
                                         quiet=True,
                                         pairwise_distances_parameters = {},
@@ -210,7 +213,7 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
             correlation_matricies[window_index] = pd.NA
             continue
             
-        mean_bp = np.array(cicero_adata_window_subset.var["mean_bp"].values).reshape(-1,1)
+        mean_bp = np.array(cicero_adata_window_subset.var["Mean"].values).reshape(-1,1)
         distance_matrix = pairwise_distances(mean_bp, **pairwise_distances_parameters)
 
         data = cicero_adata_window_subset.X.T
@@ -235,7 +238,7 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
     genomic_windows_df["peak_names"] = pd.Series(peak_names)
     return genomic_windows_df
 
-def process_subset(curr_cicero_adata, distance_mean=0.3):
+def process_subset(curr_cicero_adata, distance_mean=0.03):
     genomic_windows_df = generate_genomic_windows(curr_cicero_adata)
     cicero_models = generate_cicero_models(curr_cicero_adata, genomic_windows_df, distance_mean)
     return cicero_models
@@ -249,16 +252,16 @@ def assemble_connections(cicero_results, quiet = True):
         temp_correlation = row["correlation_matrix"]
         temp_correlation_names = row["peak_names"]
         temp_correlation_df = pd.DataFrame(temp_correlation, index = temp_correlation_names, columns = temp_correlation_names)
-        temp_correlation_df = temp_correlation_df.reset_index().rename(columns={'x': 'row'})
-        temp_correlation_df = temp_correlation_df.melt(id_vars='row', var_name='variable', value_name='value')
+        temp_correlation_df = temp_correlation_df.reset_index().rename(columns={'x': 'Peak1'})
+        temp_correlation_df = temp_correlation_df.melt(id_vars='Peak1', var_name='Peak2', value_name='value')
         correlation_dfs.append(temp_correlation_df)
 
     agg_df = pd.concat(correlation_dfs, axis=0)
-    agg_df = agg_df.groupby(['row', 'variable'])['value'].agg(min_val='min', max_val='max', mean_val='mean').reset_index()
-    agg_df['mean_coaccess'] = np.where(agg_df['min_val'] >= 0,
+    agg_df = agg_df.groupby(['Peak1', 'Peak2'])['value'].agg(min_val='min', max_val='max', mean_val='mean').reset_index()
+    agg_df['coaccess_score'] = np.where(agg_df['min_val'] >= 0,
                                     agg_df['mean_val'],
                                     np.where(agg_df['max_val'] <= 0, agg_df['mean_val'], np.nan))
-    agg_df = agg_df[agg_df['row'] < agg_df['variable']].copy() #keep only one copy/diagonal elements
+    agg_df = agg_df[agg_df['Peak1'] < agg_df['Peak2']].copy().reset_index().drop(["index", "min_val", "max_val", "mean_val"], axis = 1) #keep only one copy/diagonal elements
     
     return agg_df
 
@@ -266,10 +269,8 @@ def assemble_connections(cicero_results, quiet = True):
 def subset_cicero_adata_window(cicero_adata, window_chromsome_name, window_start, window_end):
     cicero_adata_window_subset = cicero_adata[:,(cicero_adata.var["Start"] >= window_start) & 
                                               (cicero_adata.var["End"] <= window_end) &
-                                              (cicero_adata.var["Chromosome"] == window_chromsome_name)].copy()
-    sc.pp.filter_cells(cicero_adata_window_subset, min_counts=1)
-    cicero_adata_window_subset.var["mean_bp"] = (cicero_adata_window_subset.var["Start"] + cicero_adata_window_subset.var["End"])/2
-    return cicero_adata_window_subset
+                                              (cicero_adata.var["Chromosome"] == window_chromsome_name)]
+    return cicero_adata_window_subset.copy()
 
 def cov2cor(V):
     
@@ -293,173 +294,3 @@ def get_rho_mat(dist_matrix, distance_parameter, s, xmin = 1000):
     out[~np.isfinite(out)] = 0
     out[out < 0] = 0
     return out
-
-#=================================================OLD THINGS THAT ARE SLOW BUT STILL COULD BE USEFUL =====================================================================================
-def generate_genomic_windows_from_df(genomic_ranges, window_size = 500000):
-    #returns a pd.DataFrame two columns chrosome, window_start, window_end for all possible genomic windows of window size
-
-    adjusted_sizes = ((genomic_ranges['size'] + window_size - 1) // window_size) * window_size #make sure to capture the full chromsome range
-
-    window_start_list = [np.arange(0, s, window_size) for s in adjusted_sizes]
-    window_end_list = [windows + window_size for windows in window_start_list] # Create a list of window arrays for each row.
-    window_counts = [windows.size for windows in window_start_list] #number of windows per chromsome
-
-    windows_df = pd.DataFrame({
-    'window_chromsome_name': np.repeat(genomic_ranges['chromosome'].values, window_counts),
-    'window_start': np.concatenate(window_start_list),
-    'window_end': np.concatenate(window_end_list)
-    })
-
-    return windows_df
-
-# ===============================slower method for some reason COW issue?==================
-def estimate_distance_parameter(cicero_adata, genomic_windows_df,
-                                window = 5e5, max_sample_num = 100, max_elements_per_window = 200,
-                                max_itterations = 500, seed = 0, quiet = True,
-                                find_distance_parameter_parameters = {},
-                                pairwise_distances_parameters = {},
-                                device = "cpu",
-                                ):
-    
-    if device == "gpu": 
-        from cuml.metrics import pairwise_distances
-    else:
-        from sklearn.metrics import pairwise_distances
-      
-    rng = np.random.default_rng(seed)
-    selected_windows = genomic_windows_df.index.values.copy()
-    rng.shuffle(selected_windows)
-
-    itterations = 0
-    distance_parameters = []
-
-    for window_index in tqdm(selected_windows, disable = quiet, total = min(len(selected_windows), max_itterations)):
-        
-        if len(distance_parameters) == max_sample_num:
-            break
-
-        if itterations == max_itterations:
-            break
-        
-        itterations += 1
-
-        window = genomic_windows_df.iloc[window_index,:]
-        cicero_adata_window_subset = subset_cicero_adata_window(cicero_adata, **window.to_dict())
-        cicero_adata_window_subset.X = cicero_adata_window_subset.X.astype(np.float32)
-        
-        if cicero_adata_window_subset.n_vars <= 1 or cicero_adata_window_subset.n_vars > max_elements_per_window:
-            continue
-        
-        mean_bp = np.array(cicero_adata_window_subset.var["mean_bp"].values).reshape(-1,1)
-        distance_matrix = pairwise_distances(mean_bp, **pairwise_distances_parameters)
-        distance_parameter = find_distance_parameter(cicero_adata_window_subset.X.T, distance_matrix, **find_distance_parameter_parameters)
-        
-        if distance_parameter is not None:
-            distance_parameters.append(distance_parameter)
-
-    if len(distance_parameters) == 0:
-        LOGGER.error("No Distance Parameters were able to be calcualted!!")
-        return [1]
-    
-    return distance_parameters
-
-"""
-    # could run something like this but its slower for some reason (?)
-    # and also distance_param is calcualted on a per batch basis which is
-    # different from what cicero originally does but arguably is better
-"""
-def run_cicero_by_subset(cicero_adata):
-    
-    n_cpu = n_cpu = multiprocessing.cpu_count()
-    batches = n_cpu
-
-    indices = np.linspace(0, cicero_adata.n_vars, batches + 1, dtype=int)
-    cicero_adata_batch_subsets = [cicero_adata[:, indices[index]:indices[index + 1]].copy() for index in range(batches)]
-    with multiprocessing.Pool(processes=n_cpu) as pool:
-        LOGGER.info(f"Starting Cicero with {n_cpu} processes")
-        cicero_results = pool.map(process_subset_complete, cicero_adata_batch_subsets)
-        LOGGER.info("Finished generate_cicero_models")
-    cons_rec = assemble_connections(cicero_results)
-    return cons_rec
-
-def process_subset_complete(curr_cicero_adata):
-    genomic_windows_df = generate_genomic_windows(curr_cicero_adata)
-    distance_parameters = estimate_distance_parameter(curr_cicero_adata, genomic_windows_df)
-    distance_mean = np.mean(distance_parameters)
-    cicero_results = generate_cicero_models(curr_cicero_adata, genomic_windows_df, distance_mean)
-    return cicero_results
-
-#=====================even older and less useful==============================================
-# equiavlent methods needed for generate_cicero_models 
-# due to processes hanging to wait to read memory too slow
-def _process_window_precision_matrix(window_index, genomic_windows_df, cicero_adata, max_elements_per_window,
-                    pairwise_distances_parameters, distance_parameter, s,
-                    QuicGraphicalLasso_parameters):
-
-    window = genomic_windows_df.iloc[window_index, :]
-    window_params = window.to_dict()
-
-    cicero_adata_window_subset = subset_cicero_adata_window(cicero_adata, **window_params)
-    cicero_adata_window_subset.X = cicero_adata_window_subset.X.astype(np.float32)
-
-    if cicero_adata_window_subset.n_vars <= 1 or cicero_adata_window_subset.n_vars > max_elements_per_window:
-        return window_index, pd.NA
-
-
-    mean_bp = np.array(cicero_adata_window_subset.var["mean_bp"].values).reshape(-1, 1)
-    distance_matrix = pairwise_distances(mean_bp, **pairwise_distances_parameters)
-
-    data = cicero_adata_window_subset.X.T
-    if issparse(data):
-        data = data.toarray()
-
-    rho_mat = get_rho_mat(distance_matrix, distance_parameter, s)
-    cov_mat = np.cov(data)
-    np.fill_diagonal(cov_mat, cov_mat.diagonal() + 1e-4)
-
-    gl_precision_matrix = QuicGraphicalLasso(lam=rho_mat, **QuicGraphicalLasso_parameters)\
-                            .fit(cov_mat).precision_
-
-    return window_index, gl_precision_matrix
-
-def compute_precision_matrices_parallel(cicero_adata, genomic_ranges, distance_parameter,
-                                        s = 0.75,
-                                        window_size=5e5,
-                                        max_elements_per_window = 200,
-                                        quiet=True,
-                                        pairwise_distances_parameters = {},
-                                        QuicGraphicalLasso_parameters = {"init_method":"cov"}):
-
-    # Generate the genomic windows.
-    genomic_windows_df = generate_genomic_windows(genomic_ranges, window_size=window_size)
-
-    # Get the window indices and limit the number if desired.
-    window_indices = genomic_windows_df.index.values
-
-    precision_matricies = {}
-
-    LOGGER.info("Starting multiprocessing pool for precision matrix computation")
-    pool = Pool(processes=multiprocessing.cpu_count())
-    
-    # Create a partial function with extra parameters fixed.
-    func = partial(_process_window_precision_matrix,
-                   genomic_windows_df=genomic_windows_df,
-                   cicero_adata=cicero_adata,
-                   max_elements_per_window=max_elements_per_window,
-                   pairwise_distances_parameters=pairwise_distances_parameters,
-                   distance_parameter=distance_parameter,
-                   s=s,
-                   QuicGraphicalLasso_parameters=QuicGraphicalLasso_parameters)
-    
-    # Use imap_unordered with a chosen chunksize to reduce dispatch overhead.
-    results_iterator = pool.imap_unordered(func, window_indices, chunksize=10)
-
-    for window_idx, precision_matrix in tqdm(results_iterator, total=len(window_indices), disable=quiet):
-        precision_matricies[window_idx] = precision_matrix
-
-    pool.close()
-    pool.join()
-
-    # Assign the precision matrices into the genomic_windows_df.
-    genomic_windows_df["precision_matricies"] = pd.Series(precision_matricies)
-    return genomic_windows_df
