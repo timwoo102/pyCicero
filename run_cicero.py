@@ -165,7 +165,7 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
     windows = genomic_ranges.iloc[window_indices,].values.tolist()
 
     cicero_adata.X = cicero_adata.X.astype(dtype)
-    cicero_adata_window_subsets = [subset_cicero_adata_window(cicero_adata, window[0], window[1], window[2]) for window in tqdm(windows)]
+    cicero_adata_window_subsets = [subset_cicero_adata_window(cicero_adata, window[0], window[1], window[2]) for window in tqdm(windows, disable = quiet, desc = "Generating Subsets")]
 
     func = partial(
         _process_cicero_adata_window_subset,
@@ -178,7 +178,7 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
     chunksize = len(cicero_adata_window_subsets)//n_cpu + 1
     with multiprocessing.Pool(processes=n_cpu) as pool:
         results_iterator = pool.imap_unordered(func, cicero_adata_window_subsets, chunksize=chunksize)
-        for result in tqdm(results_iterator, total=num_windows, disable=quiet):
+        for result in tqdm(results_iterator, total=num_windows, disable=quiet, desc = "Estimating Distance Parameters"):
             if result is not None:
                 distance_parameters.append(result)
                 if len(distance_parameters) >= max_sample_num:
