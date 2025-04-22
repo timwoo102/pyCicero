@@ -19,6 +19,7 @@ def expand_cons(cons, columns_exapnd = ["Peak1", "Peak2"], coaccess_score_key = 
 
         expanded_df_col_names = [column + "_" + x for x in ["Chromosome", "Start", "End"]]
         expanded_df = pd.DataFrame([x.split("-") for x in cons[column]], columns = expanded_df_col_names)
+        expanded_df.insert(0, f"{column}_Original", cons[column])
         expanded_df[expanded_df_col_names[1]] = expanded_df[expanded_df_col_names[1]].astype(np.int32)
         expanded_df[expanded_df_col_names[2]] = expanded_df[expanded_df_col_names[2]].astype(np.int32)
         
@@ -58,8 +59,8 @@ def annotate_distal_proximal(cons, tss, quiet = True):
     if len(chromosomes_disregarded) > 0:
         LOGGER.warning(f"GTF file did not contain all chromosomes or some chromosome names did not match disregarding closest TSS for the following chromosomes: {chromosomes_disregarded}")
     
-    cons.insert(4, "Peak1_Closest_TSS", np.inf)
-    cons.insert(9, "Peak2_Closest_TSS", np.inf)
+    cons.insert(5, "Peak1_Closest_TSS", np.inf)
+    cons.insert(10, "Peak2_Closest_TSS", np.inf)
 
     for chromosome in tqdm(chromosomes, disable = quiet):
 
@@ -72,8 +73,8 @@ def annotate_distal_proximal(cons, tss, quiet = True):
     
     cons = cons[np.isfinite(cons["Peak1_Closest_TSS"]) | np.isfinite(cons["Peak2_Closest_TSS"])]
 
-    cons.insert(5, "Peak1_Distal_Proximal_Annotation", "Distal")
-    cons.insert(10, "Peak2_Distal_Proximal_Annotation", "Distal")
+    cons.insert(6, "Peak1_Distal_Proximal_Annotation", "Distal")
+    cons.insert(11, "Peak2_Distal_Proximal_Annotation", "Distal")
     cons.loc[np.abs(cons["Peak1_Closest_TSS"]) < 1000, "Peak1_Distal_Proximal_Annotation"] = "Proximal"
     cons.loc[np.abs(cons["Peak2_Closest_TSS"]) < 1000, "Peak2_Distal_Proximal_Annotation"] = "Proximal"
     cons = cons.copy() #?????????????? prevents some view warning 
@@ -121,6 +122,6 @@ def annotate_genes(cons, genes_df):
     peak_2_df = cons.loc[:,("Peak2_Chromosome", "Peak2_Start", "Peak2_End")]
     peak_2_df.columns = ["chr", "start", "end"]
 
-    cons.insert(6, "Peak_1_Gene_Annotation", annotate_peaks_with_genes(peak_1_df, genes_df))
-    cons.insert(13, "Peak_2_Gene_Annotation", annotate_peaks_with_genes(peak_2_df, genes_df))
+    cons.insert(7, "Peak_1_Gene_Annotation", annotate_peaks_with_genes(peak_1_df, genes_df))
+    cons.insert(14, "Peak_2_Gene_Annotation", annotate_peaks_with_genes(peak_2_df, genes_df))
     return cons

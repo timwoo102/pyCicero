@@ -19,7 +19,6 @@ LOGGER = logging.getLogger(__name__)
 import multiprocessing
 from multiprocessing import Pool
 from functools import partial
-from sklearn.metrics import pairwise_distances
 
 #=====================MAIN====================================================
 
