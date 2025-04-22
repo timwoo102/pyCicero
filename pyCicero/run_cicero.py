@@ -97,7 +97,7 @@ def find_distance_parameter(data, distance_matrix,
         rho_mat = get_rho_mat(distance_matrix, curr_distance_parameter, s)
         cov_mat = np.cov(data) #default behavior of Quic is to auto compute cov #TODO FIX FIX FIX!!!!!
         np.fill_diagonal(cov_mat, cov_mat.diagonal() + 1e-4) #if you want to retrieve add same jitter then use custom init function
-        gl_precision_matrix = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(data).precision_
+        gl_precision_matrix = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(cov_mat).precision_
         
         n_big_entries = np.sum(distance_matrix > distance_constraint)
         if( (np.sum(gl_precision_matrix[distance_matrix > distance_constraint] != 0)/n_big_entries > 0.05) or # assures that the amount of long range connections are less than 5%
@@ -223,7 +223,7 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
         cov_mat = np.cov(data) #skggm computes cov part of init #TODO FIX FIX FIX!!!!!
         np.fill_diagonal(cov_mat, cov_mat.diagonal() + 1e-4) #if you want to retrieve add same jitter then use custom init function
 
-        qgl_out = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(data)
+        qgl_out = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(cov_mat)
         # covariance_matricies[window_index] = qgl_out._covariance
         qgl_objs[window_index] = qgl_out
         correlation_matricies[window_index] = cov2cor(qgl_out.covariance_)
