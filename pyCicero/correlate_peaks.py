@@ -4,6 +4,7 @@ import scanpy as sc
 from tqdm import tqdm
 from scipy import sparse
 from scipy.sparse import csr_matrix, hstack, issparse
+from inverse_covariance import QuicGraphicalLasso
 
 import logging
 logging.basicConfig(
@@ -82,9 +83,17 @@ def generate_matricies(cons, aggregated_adata, cicero_adata, quiet = True):
 
     return rna_peak_counts, atac_peak_counts
 
-def correlate_peaks(cons, aggregated_adata, cicero_adata, annotate = True, quiet = True):
-    rna_peak_counts, atac_peak_counts = generate_matricies(cons, aggregated_adata, cicero_adata, quiet = quiet)
-    correlation_coefficients = sparse_corr_cols(rna_peak_counts, atac_peak_counts)
+def correlate_peaks(cons, aggregated_adata, cicero_adata, annotate = True, method = "pearson"):
+
+    rna_peak_counts, atac_peak_counts = generate_matricies(cons, aggregated_adata, cicero_adata)
+
+    if method == "partial":
+        LOGGER.info("Calculating Partial Correlations")
+        correlation_coefficients = sparse_partial_corr_cols(rna_peak_counts, atac_peak_counts)
+    else:
+        LOGGER.info("Calculating Pearson Correlations")
+        correlation_coefficients = sparse_corr_cols(rna_peak_counts, atac_peak_counts)
+
     if annotate:
         cons["Correlation Coefficient"] = correlation_coefficients
         return cons
@@ -106,7 +115,7 @@ def sparse_corr_cols(A, B):
     sB  = np.asarray(B.sum(axis=0)).ravel()                 # Σ b
     sA2 = np.asarray(A.power(2).sum(axis=0)).ravel()        # Σ a²
     sB2 = np.asarray(B.power(2).sum(axis=0)).ravel()        # Σ b²
-    sAB = np.asarray(A.multiply(B).sum(axis=0)).ravel()     # Σ a·b :contentReference[oaicite:1]{index=1}
+    sAB = np.asarray(A.multiply(B).sum(axis=0)).ravel()     # Σ a·b
 
     num   = n_row * sAB - sA * sB
     denom = np.sqrt((n_row * sA2 - sA**2) * (n_row * sB2 - sB**2))
@@ -115,6 +124,22 @@ def sparse_corr_cols(A, B):
         r = num / denom
 
     return r
+
+# partial covariance by Inverse Precision matrix from graphical lasso
+# λ (ρ in the paper) – bigger → sparser precision matrix
+def sparse_partial_corr_cols(A, B, lam=0.5, mode="default", max_iter=100, tol=1e-6, eps = 1e-4, init_method = "cov"):
+
+    n_samples, p = A.shape
+    X = hstack([A, B]).toarray()
+    LOGGER.info("Starting GLASSO")
+    glasso = QuicGraphicalLasso(lam=lam, mode=mode, max_iter=max_iter, tol=tol, init_method=init_method)
+    glasso.fit(X)
+    Theta = glasso.precision_
+    LOGGER.info("Finished GLASSO")
+
+    diag_sqrt = np.sqrt(np.diag(Theta))
+    pc = -np.diagonal(Theta[:p, p:]) / (diag_sqrt[:p] * diag_sqrt[p:])
+    return pc
 
 #my testcase this ran slower
 def sparse_corr_cols_gpu(A, B):
