@@ -95,9 +95,7 @@ def find_distance_parameter(data, distance_matrix,
     for _ in tqdm(range(max_itterations), disable = quiet):
 
         rho_mat = get_rho_mat(distance_matrix, curr_distance_parameter, s)
-        cov_mat = np.cov(data) #default behavior of Quic is to auto compute cov #TODO FIX FIX FIX!!!!!
-        np.fill_diagonal(cov_mat, cov_mat.diagonal() + 1e-4) #if you want to retrieve add same jitter then use custom init function
-        gl_precision_matrix = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(cov_mat).precision_
+        gl_precision_matrix = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(data).precision_
         
         n_big_entries = np.sum(distance_matrix > distance_constraint)
         if( (np.sum(gl_precision_matrix[distance_matrix > distance_constraint] != 0)/n_big_entries > 0.05) or # assures that the amount of long range connections are less than 5%
@@ -131,7 +129,7 @@ def _process_cicero_adata_window_subset(cicero_adata_window_subset,
                     find_distance_parameter_parameters = {}):
 
     sc.pp.filter_cells(cicero_adata_window_subset, min_counts=1)
-    
+    sc.pp.filter_genes(cicero_adata_window_subset, min_counts=1)
     # Filter out windows with no variables or too many variables
     if cicero_adata_window_subset.n_vars == 0 or cicero_adata_window_subset.n_vars > max_elements_per_window:
         return None
@@ -140,7 +138,7 @@ def _process_cicero_adata_window_subset(cicero_adata_window_subset,
     mean_bp = cicero_adata_window_subset.var["Mean"].values.reshape(-1,1)
     distance_matrix = pairwise_distances(mean_bp, 
                                          **pairwise_distances_parameters)
-    distance_param = find_distance_parameter(cicero_adata_window_subset.X.T, distance_matrix,
+    distance_param = find_distance_parameter(cicero_adata_window_subset.X, distance_matrix,
                                              **find_distance_parameter_parameters)
     return distance_param
 
@@ -215,15 +213,13 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
         mean_bp = np.array(cicero_adata_window_subset.var["Mean"].values).reshape(-1,1)
         distance_matrix = pairwise_distances(mean_bp, **pairwise_distances_parameters)
 
-        data = cicero_adata_window_subset.X.T
+        data = cicero_adata_window_subset.X
         if issparse(data):
             data = data.toarray()
 
         rho_mat = get_rho_mat(distance_matrix, distance_parameter, s)
-        cov_mat = np.cov(data) #skggm computes cov part of init #TODO FIX FIX FIX!!!!!
-        np.fill_diagonal(cov_mat, cov_mat.diagonal() + 1e-4) #if you want to retrieve add same jitter then use custom init function
 
-        qgl_out = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(cov_mat)
+        qgl_out = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(data)
         # covariance_matricies[window_index] = qgl_out._covariance
         qgl_objs[window_index] = qgl_out
         correlation_matricies[window_index] = cov2cor(qgl_out.covariance_)
@@ -271,6 +267,8 @@ def subset_cicero_adata_window(cicero_adata, window_chromsome_name, window_start
                                               (cicero_adata.var["Chromosome"] == window_chromsome_name)]
     return cicero_adata_window_subset.copy()
 
+#simple cov2corr ported from R Stats package
+#some kind of partial correlation by standarizing V by sqrt diagonal
 def cov2cor(V):
     
     D = np.diag(V)
