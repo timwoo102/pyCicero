@@ -193,7 +193,8 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
                                         max_elements_per_window = 200,
                                         quiet=True,
                                         pairwise_distances_parameters = {},
-                                        QuicGraphicalLasso_parameters = {"init_method":"cov"}):
+                                        QuicGraphicalLasso_parameters = {"init_method":"cov"},
+                                        partial = True):
     
     qgl_objs = {}
     correlation_matricies = {}
@@ -222,7 +223,10 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
         qgl_out = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(data)
         # covariance_matricies[window_index] = qgl_out._covariance
         qgl_objs[window_index] = qgl_out
-        correlation_matricies[window_index] = cov2cor(qgl_out.covariance_)
+        if partial:
+            correlation_matricies[window_index] = icov2pcorr(qgl_out.precision_)
+        else:
+            correlation_matricies[window_index] = cov2cor(qgl_out.covariance_)
         peak_names[window_index] = cicero_adata_window_subset.var_names
         itterations += 1
         if itterations == 200:
@@ -268,7 +272,7 @@ def subset_cicero_adata_window(cicero_adata, window_chromsome_name, window_start
     return cicero_adata_window_subset.copy()
 
 #simple cov2corr ported from R Stats package
-#some kind of partial correlation by standarizing V by sqrt diagonal
+#some kind of partial correlation if V is inverse cov by standarizing V by sqrt diagonal
 def cov2cor(V):
     
     D = np.diag(V)
@@ -284,6 +288,15 @@ def cov2cor(V):
     np.fill_diagonal(r, 1)
     
     return r
+
+#inverse covaraince 2 partial correlation through negative matrix inversion
+def icov2pcorr(theta):
+    d = np.diag(theta)
+    inv_sqrt_diag = 1.0 / np.sqrt(d)
+    scale = np.outer(inv_sqrt_diag, inv_sqrt_diag)
+    pcorr = -theta * scale
+    np.fill_diagonal(pcorr, 1.0)
+    return pcorr
 
 def get_rho_mat(dist_matrix, distance_parameter, s, xmin = 1000):
     np.seterr(divide='ignore')
