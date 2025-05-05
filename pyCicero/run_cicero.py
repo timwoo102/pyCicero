@@ -54,10 +54,10 @@ def run_cicero(cicero_adata):
 def generate_genomic_windows(cicero_adata, window_size = 5e5):
     
     #assume sorted indicies #TODO:make a function that sorts 
-    unique_chromosomes = cicero_adata.var["Chromosome"].unique()
+    unique_chromosomes = cicero_adata.var["Chr"].unique()
     genomic_ranges = pd.DataFrame(index = range(len(unique_chromosomes)), columns = ["chromosome", "start", "end"])
-    for index, chromsome in enumerate(cicero_adata.var["Chromosome"].unique()):
-        var_df = cicero_adata.var[cicero_adata.var["Chromosome"] == chromsome]
+    for index, chromsome in enumerate(cicero_adata.var["Chr"].unique()):
+        var_df = cicero_adata.var[cicero_adata.var["Chr"] == chromsome]
         start = var_df.iloc[0]['Start']
         start -= start%window_size #shrink to nearest window size
         end = var_df.iloc[-1]['End']
@@ -128,8 +128,10 @@ def _process_cicero_adata_window_subset(cicero_adata_window_subset,
                     max_elements_per_window, pairwise_distances_parameters,
                     find_distance_parameter_parameters = {}):
 
-    sc.pp.filter_cells(cicero_adata_window_subset, min_counts=1)
-    sc.pp.filter_genes(cicero_adata_window_subset, min_counts=1)
+    #no longer needed for subset windows
+    # sc.pp.filter_cells(cicero_adata_window_subset, min_counts=1)
+    # sc.pp.filter_genes(cicero_adata_window_subset, min_counts=1)
+
     # Filter out windows with no variables or too many variables
     if cicero_adata_window_subset.n_vars == 0 or cicero_adata_window_subset.n_vars > max_elements_per_window:
         return None
@@ -162,7 +164,7 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
     windows = genomic_ranges.iloc[window_indices,].values.tolist()
 
     cicero_adata.X = cicero_adata.X.astype(dtype)
-    cicero_adata_window_subsets = [subset_cicero_adata_window(cicero_adata, window[0], window[1], window[2]) for window in tqdm(windows, disable = quiet, desc = "Generating Subsets")]
+    cicero_adata_window_subsets = subset_cicero_adata_window(cicero_adata, windows, quiet = quiet)
 
     func = partial(
         _process_cicero_adata_window_subset,
@@ -203,7 +205,8 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
     for window_index in tqdm(genomic_windows_df.index.values, disable = quiet):
         
         window = genomic_windows_df.iloc[window_index,:]
-        cicero_adata_window_subset = subset_cicero_adata_window(cicero_adata, **window.to_dict())
+        #TODO: FIX THIS TO USE THE VIEW SUBSET
+        cicero_adata_window_subset = subset_cicero_adata_window_single(cicero_adata, **window.to_dict())
         cicero_adata_window_subset.X = cicero_adata_window_subset.X.astype(np.float32)
             
         if cicero_adata_window_subset.n_vars <= 1 or cicero_adata_window_subset.n_vars > max_elements_per_window:
@@ -251,7 +254,7 @@ def assemble_connections(cicero_results, quiet = True):
         temp_correlation = row["correlation_matrix"]
         temp_correlation_names = row["peak_names"]
         temp_correlation_df = pd.DataFrame(temp_correlation, index = temp_correlation_names, columns = temp_correlation_names)
-        temp_correlation_df = temp_correlation_df.reset_index().rename(columns={'x': 'Peak1'})
+        temp_correlation_df = temp_correlation_df.reset_index().rename(columns={temp_correlation_df.index.name or 'index': 'Peak1'})
         temp_correlation_df = temp_correlation_df.melt(id_vars='Peak1', var_name='Peak2', value_name='value')
         correlation_dfs.append(temp_correlation_df)
 
@@ -265,11 +268,36 @@ def assemble_connections(cicero_results, quiet = True):
     return agg_df
 
 #====================================HELPER FUNCTIONS============================================================================
-def subset_cicero_adata_window(cicero_adata, window_chromsome_name, window_start, window_end):
+
+#removed for slow copying, only using vew with relevant information isntead
+def subset_cicero_adata_window_single(cicero_adata, window_chromsome_name, window_start, window_end):
     cicero_adata_window_subset = cicero_adata[:,(cicero_adata.var["Start"] >= window_start) & 
                                               (cicero_adata.var["End"] <= window_end) &
-                                              (cicero_adata.var["Chromosome"] == window_chromsome_name)]
+                                              (cicero_adata.var["Chr"] == window_chromsome_name)]
     return cicero_adata_window_subset.copy()
+
+def subset_cicero_adata_window(adata, windows, quiet = True):
+    start  = adata.var["Start"].to_numpy()
+    end    = adata.var["End"].to_numpy()
+    chrom  = adata.var["Chr"].to_numpy()
+    win_chr, win_start, win_end = map(np.asarray, zip(*windows))
+    mask = ((chrom == win_chr[:, None]) &
+    (start >= win_start[:, None]) &
+    (end   <= win_end[:, None]))
+
+    idx_per_win = [np.flatnonzero(m) for m in mask]
+
+    flat_idx   = np.concatenate(idx_per_win)
+    big_subset = adata[:, flat_idx].copy()
+
+    out      = []
+    offset   = 0
+    for n_cols in tqdm(map(len, idx_per_win), total = len(idx_per_win), disable = quiet, desc="Generating Adata Views"):
+        sub = big_subset[:, offset : offset + n_cols]   # view on columns
+        offset += n_cols
+        cell_mask = sub.X.getnnz(axis=1) > 0
+        out.append(sub[cell_mask, :])    # view on rows
+    return out
 
 #simple cov2corr ported from R Stats package
 #some kind of partial correlation if V is inverse cov by standarizing V by sqrt diagonal

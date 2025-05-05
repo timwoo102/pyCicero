@@ -223,7 +223,11 @@ def make_cicero_adata(adata: sc.AnnData, aggregate_layer_key: str = "counts", em
     aggregated_obs["aggregate_obs_names"] = [adata.obs_names[list(indicies)] for indicies in pseudobulk_cell_dict.values()]
     
     new_adata = sc.AnnData(X=aggregated_counts, var=adata.var.copy(), obs = aggregated_obs)
-    
+
+    if "Mean" not in new_adata.var.columns:
+        idx_end = np.where(new_adata.var.columns == "End")[0][0]
+        new_adata.var.insert(idx_end+1, "Mean", (new_adata.var["Start"] + new_adata.var["End"])/2)
+        
     return new_adata
 
 

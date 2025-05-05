@@ -3,6 +3,7 @@ import numpy as np
 import scanpy as sc
 from tqdm import tqdm
 from scipy import sparse
+from scipy.stats import t  
 from scipy.sparse import csr_matrix, hstack, issparse
 from inverse_covariance import QuicGraphicalLasso
 
@@ -92,13 +93,17 @@ def correlate_peaks(cons, aggregated_adata, cicero_adata, annotate = True, metho
         correlation_coefficients = sparse_partial_corr_cols(rna_peak_counts, atac_peak_counts)
     else:
         LOGGER.info("Calculating Pearson Correlations")
+        # correlation_coefficients, p_vals = sparse_corr_cols(rna_peak_counts, atac_peak_counts)
         correlation_coefficients = sparse_corr_cols(rna_peak_counts, atac_peak_counts)
 
-    if annotate:
-        cons["Correlation Coefficient"] = correlation_coefficients
-        return cons
-    else:
+    if annotate and method == "partial":
+        LOGGER.warning("Cannot annotate cons for correlate_peaks if method='Partial'. Partial is experimental. Returning Correlation Vector Directly")
+        # return correlation_coefficients, p_vals
         return correlation_coefficients
+    else:
+        cons["Correlation Coefficient"] = correlation_coefficients
+        # cons["Correlation P-val"] = p_vals
+        return cons
 
 def sparse_corr_cols(A, B):
 
@@ -109,21 +114,30 @@ def sparse_corr_cols(A, B):
     if A.ndim != 2:
         raise ValueError("input must be 2‑D")
 
-    n_row = A.shape[0]                         # number of rows / observations
+    n = A.shape[0]
 
-    sA  = np.asarray(A.sum(axis=0)).ravel()                 # Σ a
-    sB  = np.asarray(B.sum(axis=0)).ravel()                 # Σ b
-    sA2 = np.asarray(A.power(2).sum(axis=0)).ravel()        # Σ a²
-    sB2 = np.asarray(B.power(2).sum(axis=0)).ravel()        # Σ b²
-    sAB = np.asarray(A.multiply(B).sum(axis=0)).ravel()     # Σ a·b
+    sA  = np.asarray(A.sum(axis=0)).ravel()          
+    sB  = np.asarray(B.sum(axis=0)).ravel()          
+    sA2 = np.asarray(A.power(2).sum(axis=0)).ravel() 
+    sB2 = np.asarray(B.power(2).sum(axis=0)).ravel() 
+    sAB = np.asarray(A.multiply(B).sum(axis=0)).ravel()  
 
-    num   = n_row * sAB - sA * sB
-    denom = np.sqrt((n_row * sA2 - sA**2) * (n_row * sB2 - sB**2))
+    num   = n * sAB - sA * sB
+    denom = np.sqrt((n * sA2 - sA**2) * (n * sB2 - sB**2))
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        r = num / denom
+        r = num / denom          # Pearson coefficients
+        r[denom == 0] = np.nan
 
     return r
+    df = n - 2
+    # clip to avoid numerical issues
+    r_clip = np.clip(r, -1 + 1e-15, 1 - 1e-15)
+    t_stat = r_clip * np.sqrt(df / (1.0 - r_clip**2))
+    p = 2.0 * t.sf(np.abs(t_stat), df)  # two-tailed
+
+    p[np.isnan(r)] = np.nan
+    return r, p
 
 # partial covariance by Inverse Precision matrix from graphical lasso
 # λ (ρ in the paper) – bigger → sparser precision matrix
