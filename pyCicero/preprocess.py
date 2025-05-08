@@ -6,27 +6,22 @@ from scipy import sparse
 import scanpy as sc
 from scipy.sparse import coo_matrix
 
-device = "gpu"
+from sklearn.neighbors import NearestNeighbors
+from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.decomposition import TruncatedSVD #bottle neck with no good gpu implementation for sparse
 
-if device == "cpu":
-    from sklearn.neighbors import NearestNeighbors
-    from sklearn.feature_extraction.text import TfidfTransformer
-    from sklearn.decomposition import TruncatedSVD
-    import umap as UMAP
-if device == "gpu": 
-    from sklearn.neighbors import NearestNeighbors
-    from sklearn.feature_extraction.text import TfidfTransformer
-    from sklearn.decomposition import TruncatedSVD #bottle neck with no good gpu implementation for sparse
-    # import umap as UMAP
-    from cuml.manifold import UMAP 
+# if device == "gpu": 
+#     from sklearn.neighbors import NearestNeighbors
+#     from sklearn.feature_extraction.text import TfidfTransformer
+#     from sklearn.decomposition import TruncatedSVD 
+#     from cuml.manifold import UMAP 
     
-    #--------------------- offers minimal speedup on my V100 and dataset where n=35,000 -------------------------------
-    # from cuml.neighbors import NearestNeighbors
-    # from cuml.feature_extraction.text import TfidfTransformer
-    # # from cuml.decomposition import TruncatedSVD # Doesn't work for sparse
-    # from cuda_TruncatedSVD import TruncatedSVD 
-    # from cuml.manifold import UMAP
-    # import cupy as cp
+#--------------------- offers minimal speedup on my V100 -------------------------------
+# from cuml.neighbors import NearestNeighbors
+# from cuml.feature_extraction.text import TfidfTransformer
+# # from cuml.decomposition import TruncatedSVD # Doesn't work for sparse
+# from cuml.manifold import UMAP
+# import cupy as cp
 
 import logging
 logging.basicConfig(
@@ -84,10 +79,16 @@ def normalize_expr_data(FM, size_factors, norm_method='log', pseudo_count=None):
 
 def preprocess_cicero(adata: sc.AnnData, 
                       normalize = True,
+                      device = "cpu",
                TruncatedSVD_params:  dict = {"n_components":50}, 
                tfidf_params: dict = {"norm":'l2'}, 
                umap_params:  dict = {"n_neighbors":15, "n_components":2, "min_dist":0.5, "n_epochs":1e3}):
     
+    if device == "gpu":
+        from cuml.manifold import UMAP
+    else:
+        import umap as UMAP
+
     TFIDF_KEY = "X_tfidf"
     TSVD_KEY  = "X_tsvd"
     UMAP_KEY  = "X_umap"
@@ -108,10 +109,6 @@ def preprocess_cicero(adata: sc.AnnData,
     else:
         LOGGER.info("Running Preprocssing without normalizing counts")
         data = adata.layers["counts"]
-    
-    # normalized_counts_row_sums = np.sum(adata.layers["data"], axis=1)
-    # normalized_counts_row_sums = np.array(normalized_counts_row_sums)[:,0]
-    # normalized_counts_filtered = adata.layers["data"][np.isfinite(normalized_counts_row_sums) & (normalized_counts_row_sums != 0), :]
     
     LOGGER.info("Running TF-IDF")
     tfidf = TfidfTransformer(**tfidf_params)
@@ -150,10 +147,10 @@ def calculate_overlap(embedding: pd.DataFrame, k: int = 50, seed: int = 0, max_i
     # Precompute sets for each index to avoid repeated DataFrame lookups.
     nn_sets = { idx: set(nn_map.loc[idx].values) for idx in nn_map.index }
 
+    # Compute the fraction of elements in idx1 that are also in idx2
     def overlap_set(idx1, idx2):
         set1 = nn_sets[idx1]
         set2 = nn_sets[idx2]
-        # Compute the fraction of elements in idx1 that are also in idx2
         return len(set1.intersection(set2)) / len(set1)
 
     good_choices = []
@@ -229,25 +226,3 @@ def make_cicero_adata(adata: sc.AnnData, aggregate_layer_key: str = "counts", em
         new_adata.var.insert(idx_end+1, "Mean", (new_adata.var["Start"] + new_adata.var["End"])/2)
         
     return new_adata
-
-
-def generate_umap(counts = None, data = None, 
-                      normalize = True,
-               TruncatedSVD_params:  dict = {"n_components":50}, 
-               tfidf_params: dict = {"norm":'l2'}, 
-               umap_params:  dict = {"n_neighbors":15, "n_components":2, "min_dist":0.5, "n_epochs":1e3}):
-
-    if counts is not None and normalize:
-       size_factors = estimate_sf(counts)
-       data = normalize_expr_data(counts, size_factors).tocsr()
-
-    tfidf = TfidfTransformer(**tfidf_params)
-    X_tfidf = tfidf.fit_transform(data)
-
-    tsvd = TruncatedSVD(**TruncatedSVD_params)
-    A_transformed = tsvd.fit_transform(X_tfidf)
-    #TODO: consider adding harmony integration here
-    umap_model = UMAP(**umap_params)
-    embedding = umap_model.fit_transform(A_transformed)
-
-    return embedding

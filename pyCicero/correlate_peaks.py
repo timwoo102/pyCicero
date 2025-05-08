@@ -26,7 +26,8 @@ def correlate_peaks(cons, rna_adata, atac_adata, distal_cutoff = 1000, cons_subs
         LOGGER.info("Finished Aggregation")
 
     LOGGER.info("Generating Peak to Links")
-    cons_subset, peak_to_gene = get_peak_to_gene_links(cons, atac_adata, distal_cutoff=distal_cutoff, cons_subset_threshold=cons_subset_threshold)
+    cons_subset = prepare_cons(cons, atac_adata=atac_adata, distal_cutoff=distal_cutoff, cons_subset_threshold=cons_subset_threshold)
+    peak_to_gene = link_peaks_to_genes(cons_subset)
     LOGGER.info("Finished generating Peak to Links")
     atac_mtx, rna_mtx = prepare_matricies(peak_to_gene, rna_adata, atac_adata)
 
@@ -81,24 +82,31 @@ def aggregate_rna_adata(adata, cicero_adata, aggregate_obs_column = "aggregate_o
     
     return aggregated_adata
 
-def get_peak_to_gene_links(cons, atac_adata, distal_cutoff = 1000, cons_subset_threshold = 0.2):
+def prepare_cons(cons, atac_adata = None, annotation = None, distal_cutoff = 1000, cons_subset_threshold = 0.2):
 
-    cons_subset = cons[np.abs(cons["coaccess_score"]) >= cons_subset_threshold]
+    if atac_adata is not None:
+        annotation = atac_adata.var
+        
+    cons_subset = cons[np.abs(cons["coaccess_score"]) >= cons_subset_threshold].copy()
 
-    #optional to add. Keeping for now
-    atac_adata.var["Proximal|Distal"] = np.where(atac_adata.var["Distance to TSS"] > distal_cutoff,"Proximal","Distal")
-    atac_adata.var["is_proximal"] = np.abs(atac_adata.var["Distance to TSS"]) <= distal_cutoff
+    annotation["Proximal|Distal"] = np.where(np.abs(annotation["Distance to TSS"]) <= distal_cutoff,"Proximal","Distal")
+    annotation["is_proximal"] = np.abs(annotation["Distance to TSS"]) <= distal_cutoff
     
-    peak1_annotations = atac_adata.var.loc[cons_subset["Peak1"],:]
-    peak2_annotations = atac_adata.var.loc[cons_subset["Peak2"],:]
+    peak1_annotations = annotation.loc[cons_subset["Peak1"],:]
+    peak2_annotations = annotation.loc[cons_subset["Peak2"],:]
 
-    #we only analyze the proximal to distal (or distal to proxmial) connections 
+    cons_subset["Peak1_Proximal|Distal"] = peak1_annotations["Proximal|Distal"].values
+    cons_subset["Peak2_Proximal|Distal"] = peak2_annotations["Proximal|Distal"].values
+    
+    cons_subset["Gene"] = np.where(cons_subset["Peak1_Proximal|Distal"] == "Proximal", peak1_annotations["Gene Name"], peak2_annotations["Gene Name"]) #Gene Name will be the gene name decided by Homer of the proximal pair
     proximal_distal_mask = np.logical_xor(peak1_annotations["is_proximal"].values, peak2_annotations["is_proximal"].values)
+    cons_subset = cons_subset[proximal_distal_mask].copy()
     
-    peak1_annotations = peak1_annotations[proximal_distal_mask & peak1_annotations["is_proximal"].values]
-    peak2_annotations = peak2_annotations[proximal_distal_mask & peak2_annotations["is_proximal"].values]
+    return cons_subset
 
-    return cons_subset[proximal_distal_mask].copy(), peak1_annotations["Gene Name"].to_dict() | peak2_annotations["Gene Name"].to_dict() #merge two dicts
+def link_peaks_to_genes(cons):
+    proxmial_peaks = np.where(cons["Peak1_Proximal|Distal"] == "Proximal", cons["Peak1"], cons["Peak2"])
+    return dict(zip(proxmial_peaks, cons["Gene"]))
 
 def prepare_matricies(peak_to_gene, rna_adata, atac_adata,):
     
@@ -149,16 +157,9 @@ def sparse_corr_cols(A, B):
         r[denom == 0] = np.nan
 
     return r
-    df = n - 2
-    # clip to avoid numerical issues
-    r_clip = np.clip(r, -1 + 1e-15, 1 - 1e-15)
-    t_stat = r_clip * np.sqrt(df / (1.0 - r_clip**2))
-    p = 2.0 * t.sf(np.abs(t_stat), df)  # two-tailed
-
-    p[np.isnan(r)] = np.nan
-    return r, p
 
 # partial covariance by Inverse Precision matrix from graphical lasso
+# consider using GFC_L or GFC_SL
 # λ (ρ in the paper) – bigger → sparser precision matrix
 def sparse_partial_corr_cols(A, B, lam=0.5, mode="default", max_iter=100, tol=1e-6, eps = 1e-4, init_method = "cov"):
 
