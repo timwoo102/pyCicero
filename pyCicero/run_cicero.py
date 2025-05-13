@@ -53,14 +53,13 @@ def run_cicero(cicero_adata):
 #generate directly from cicero_adata.var
 def generate_genomic_windows(cicero_adata, window_size = 5e5):
     
-    #assume sorted indicies #TODO:make a function that sorts 
     unique_chromosomes = cicero_adata.var["Chr"].unique()
     genomic_ranges = pd.DataFrame(index = range(len(unique_chromosomes)), columns = ["chromosome", "start", "end"])
     for index, chromsome in enumerate(cicero_adata.var["Chr"].unique()):
         var_df = cicero_adata.var[cicero_adata.var["Chr"] == chromsome]
-        start = var_df.iloc[0]['Start']
+        start = var_df["Start"].min()
         start -= start%window_size #shrink to nearest window size
-        end = var_df.iloc[-1]['End']
+        end = var_df["End"].max()
         end = (end//window_size + 1) * window_size #extend to nearest window size
         genomic_ranges.iloc[index,] = [chromsome, start, end] 
 
