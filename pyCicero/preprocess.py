@@ -82,12 +82,12 @@ def preprocess_cicero(adata: sc.AnnData,
                       device = "cpu",
                TruncatedSVD_params:  dict = {"n_components":50}, 
                tfidf_params: dict = {"norm":'l2'}, 
-               umap_params:  dict = {"n_neighbors":15, "n_components":2, "min_dist":0.5, "n_epochs":1e3}):
+               umap_params:  dict = {"n_neighbors":15, "n_components":2, "min_dist":0.5, "n_epochs":int(1e3)}):
     
     if device == "gpu":
         from cuml.manifold import UMAP
     else:
-        import umap as UMAP
+        from umap import UMAP
 
     TFIDF_KEY = "X_tfidf"
     TSVD_KEY  = "X_tsvd"
@@ -123,7 +123,7 @@ def preprocess_cicero(adata: sc.AnnData,
     LOGGER.info("Finsihed TruncatedSVD")
 
     #TODO: consider adding harmony integration here
-    
+
     LOGGER.info("Running UMAP")
     umap_model = UMAP(**umap_params)
     embedding = umap_model.fit_transform(A_transformed)

@@ -112,11 +112,11 @@ def prepare_matricies(peak_to_gene, rna_adata, atac_adata,):
     
     if np.any(~rna_adata.obs_names.isin(atac_adata.obs_names)) or np.any(~atac_adata.obs_names.isin(rna_adata.obs_names)):
         LOGGER.warning("rna and atac adata do not share the same obs_names. Trying to fix by computing union of cell names")
-        total_obs = len(rna_adata.obs_names.union(atac_adata.obs_names))
+        # total_obs = len(rna_adata.obs_names.union(atac_adata.obs_names))
         obs_names_intersection = rna_adata.obs_names.intersection(atac_adata.obs_names)
         rna_adata = rna_adata[obs_names_intersection,]
         atac_adata = atac_adata[obs_names_intersection,]
-        LOGGER.warning(f"Subsetting to {len(obs_names_intersection)/total_obs*100:.2f}% of original observations")
+        LOGGER.warning(f"Subsetting to {len(obs_names_intersection)/atac_adata.n_obs*100:.2f}% of original observations")
 
     peaks = list(peak_to_gene.keys())
     genes = list(peak_to_gene.values())
