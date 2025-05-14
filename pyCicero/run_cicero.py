@@ -125,7 +125,7 @@ def find_distance_parameter(data, distance_matrix,
 #Helper for estimate_distance_parameter_parallel
 def _process_cicero_adata_window_subset(cicero_adata_window_subset,
                     max_elements_per_window, pairwise_distances_parameters,
-                    find_distance_parameter_parameters = {}):
+                    find_distance_parameter_parameters = {}, quiet = True):
 
     #no longer needed for subset windows
     # sc.pp.filter_cells(cicero_adata_window_subset, min_counts=1)
@@ -139,7 +139,7 @@ def _process_cicero_adata_window_subset(cicero_adata_window_subset,
     mean_bp = cicero_adata_window_subset.var["Mean"].values.reshape(-1,1)
     distance_matrix = pairwise_distances(mean_bp, 
                                          **pairwise_distances_parameters)
-    distance_param = find_distance_parameter(cicero_adata_window_subset.X, distance_matrix,
+    distance_param = find_distance_parameter(cicero_adata_window_subset.X, distance_matrix, quiet = quiet,
                                              **find_distance_parameter_parameters)
     return distance_param
 
@@ -169,7 +169,8 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
         _process_cicero_adata_window_subset,
         max_elements_per_window=max_elements_per_window,
         pairwise_distances_parameters=pairwise_distances_parameters,
-        find_distance_parameter_parameters=find_distance_parameter_parameters
+        find_distance_parameter_parameters=find_distance_parameter_parameters,
+        quiet = quiet
     )
     
     LOGGER.info(f"Starting multiprocessing pool for estimate_distance_parameter_parallel with {n_cpu} processes")
