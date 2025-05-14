@@ -22,6 +22,7 @@ from functools import partial
 
 #=====================MAIN====================================================
 
+#quiet really sucks 
 def run_cicero(cicero_adata, quiet = True):
 
     LOGGER.info("Generating Windows")
@@ -132,7 +133,9 @@ def _process_cicero_adata_window_subset(cicero_adata_window_subset,
     # sc.pp.filter_genes(cicero_adata_window_subset, min_counts=1)
 
     # Filter out windows with no variables or too many variables
-    if cicero_adata_window_subset.n_vars == 0 or cicero_adata_window_subset.n_vars > max_elements_per_window:
+    if (cicero_adata_window_subset.n_vars == 0 or 
+        cicero_adata_window_subset.n_vars > max_elements_per_window or
+        cicero_adata_window_subset.n_obs == 0):
         return None
 
     # Compute the distance matrix and extract the distance parameter
@@ -209,10 +212,13 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
         cicero_adata_window_subset = subset_cicero_adata_window_single(cicero_adata, **window.to_dict())
         cicero_adata_window_subset.X = cicero_adata_window_subset.X.astype(np.float32)
             
-        if cicero_adata_window_subset.n_vars <= 1 or cicero_adata_window_subset.n_vars > max_elements_per_window:
-            qgl_objs[window_index] = pd.NA
-            correlation_matricies[window_index] = pd.NA
-            continue
+        if (cicero_adata_window_subset.n_vars == 0 or 
+            cicero_adata_window_subset.n_vars > max_elements_per_window or
+            cicero_adata_window_subset.n_obs == 0):
+                
+                qgl_objs[window_index] = pd.NA
+                correlation_matricies[window_index] = pd.NA
+                continue
             
         mean_bp = np.array(cicero_adata_window_subset.var["Mean"].values).reshape(-1,1)
         distance_matrix = pairwise_distances(mean_bp, **pairwise_distances_parameters)
