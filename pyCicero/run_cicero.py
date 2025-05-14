@@ -22,12 +22,12 @@ from functools import partial
 
 #=====================MAIN====================================================
 
-def run_cicero(cicero_adata):
+def run_cicero(cicero_adata, quiet = True):
 
     LOGGER.info("Generating Windows")
     genomic_windows_df = generate_genomic_windows(cicero_adata)
     LOGGER.info("Starting distance_parameter_estimation")
-    distance_parameters = estimate_distance_parameter_parallel(cicero_adata, genomic_windows_df)
+    distance_parameters = estimate_distance_parameter_parallel(cicero_adata, genomic_windows_df, quiet = quiet)
     LOGGER.info("Finished distance_parameter_estimation")
 
     LOGGER.info("Starting generate_cicero_models")
@@ -37,14 +37,14 @@ def run_cicero(cicero_adata):
     indices = np.linspace(0, cicero_adata.n_vars, batches + 1, dtype=int)
     cicero_adata_batch_subsets = [cicero_adata[:, indices[index]:indices[index + 1]].copy() for index in range(batches)]
 
-    process_subset_with_fixed_param = partial(process_subset, distance_mean=np.mean(distance_parameters))
+    process_subset_with_fixed_param = partial(process_subset, distance_mean=np.mean(distance_parameters), quiet = quiet)
     with multiprocessing.Pool(processes=n_cpu) as pool:
             LOGGER.info(f"Starting Cicero with {n_cpu} processes")
             cicero_results = pool.map(process_subset_with_fixed_param, cicero_adata_batch_subsets)
             LOGGER.info("Finished generate_cicero_models")
 
     LOGGER.info("Starting assemble_connections")
-    cons_rec = assemble_connections(cicero_results)
+    cons_rec = assemble_connections(cicero_results, quiet = quiet)
     LOGGER.info("Finished assemble_connections")
     return cons_rec
 
@@ -239,9 +239,9 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
     genomic_windows_df["peak_names"] = pd.Series(peak_names)
     return genomic_windows_df
 
-def process_subset(curr_cicero_adata, distance_mean=0.03):
+def process_subset(curr_cicero_adata, distance_mean=0.03, quiet = True):
     genomic_windows_df = generate_genomic_windows(curr_cicero_adata)
-    cicero_models = generate_cicero_models(curr_cicero_adata, genomic_windows_df, distance_mean)
+    cicero_models = generate_cicero_models(curr_cicero_adata, genomic_windows_df, distance_mean, quiet = quiet)
     return cicero_models
 
 def assemble_connections(cicero_results, quiet = True):
