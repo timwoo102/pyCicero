@@ -38,10 +38,10 @@ def run_cicero(cicero_adata, quiet = True, copy = False):
     indices = np.linspace(0, cicero_adata.n_vars, batches + 1, dtype=int)
     cicero_adata_batch_subsets = [cicero_adata[:, indices[index]:indices[index + 1]].copy() for index in range(batches)]
 
-    process_subset_with_fixed_param = partial(process_subset, distance_mean=np.mean(distance_parameters), quiet = False)
+    process_subset_with_fixed_param = partial(process_subset, distance_mean=np.mean(distance_parameters), quiet = True)
     with multiprocessing.Pool(processes=n_cpu) as pool:
             LOGGER.info(f"Starting Cicero with {n_cpu} processes")
-            cicero_results = list(tqdm(pool.imap(process_subset_with_fixed_param, cicero_adata_batch_subsets), total=len(cicero_adata_batch_subsets)), disable = quiet)
+            cicero_results = list(tqdm(pool.imap(process_subset_with_fixed_param, cicero_adata_batch_subsets), total=len(cicero_adata_batch_subsets), disable = quiet))
             LOGGER.info("Finished generate_cicero_models")
 
     LOGGER.info("Starting assemble_connections")
@@ -182,11 +182,16 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
     
     LOGGER.info(f"Starting multiprocessing pool for estimate_distance_parameter_parallel with {n_cpu} processes")
     chunksize = len(cicero_adata_window_subsets)//n_cpu + 1
+    print_counter = 1
     with multiprocessing.Pool(processes=n_cpu) as pool:
         results_iterator = pool.imap_unordered(func, cicero_adata_window_subsets, chunksize=chunksize)
         for result in tqdm(results_iterator, total=num_windows, disable=quiet, desc = "Estimating Distance Parameters"):
             if result is not None:
                 distance_parameters.append(result)
+                
+                if len(distance_parameters)//10 >= print_counter and not quiet:
+                    LOGGER.info(f"Found {len(distance_parameters)} possible distance parameters so far")
+                    print_counter += 1
                 if len(distance_parameters) >= max_sample_num:
                     pool.terminate()
                     break
