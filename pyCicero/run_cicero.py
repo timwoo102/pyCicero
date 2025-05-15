@@ -23,12 +23,12 @@ from functools import partial
 #=====================MAIN====================================================
 
 #quiet really sucks 
-def run_cicero(cicero_adata, quiet = True):
+def run_cicero(cicero_adata, quiet = True, copy = False):
 
     LOGGER.info("Generating Windows")
     genomic_windows_df = generate_genomic_windows(cicero_adata)
     LOGGER.info("Starting distance_parameter_estimation")
-    distance_parameters = estimate_distance_parameter_parallel(cicero_adata, genomic_windows_df, quiet = quiet)
+    distance_parameters = estimate_distance_parameter_parallel(cicero_adata, genomic_windows_df, copy = copy, quiet = quiet)
     LOGGER.info("Finished distance_parameter_estimation")
 
     LOGGER.info("Starting generate_cicero_models")
@@ -38,10 +38,10 @@ def run_cicero(cicero_adata, quiet = True):
     indices = np.linspace(0, cicero_adata.n_vars, batches + 1, dtype=int)
     cicero_adata_batch_subsets = [cicero_adata[:, indices[index]:indices[index + 1]].copy() for index in range(batches)]
 
-    process_subset_with_fixed_param = partial(process_subset, distance_mean=np.mean(distance_parameters), quiet = quiet)
+    process_subset_with_fixed_param = partial(process_subset, distance_mean=np.mean(distance_parameters), quiet = False)
     with multiprocessing.Pool(processes=n_cpu) as pool:
             LOGGER.info(f"Starting Cicero with {n_cpu} processes")
-            cicero_results = pool.map(process_subset_with_fixed_param, cicero_adata_batch_subsets)
+            cicero_results = list(tqdm(pool.imap(process_subset_with_fixed_param, cicero_adata_batch_subsets), total=len(cicero_adata_batch_subsets)), disable = quiet)
             LOGGER.info("Finished generate_cicero_models")
 
     LOGGER.info("Starting assemble_connections")
@@ -90,7 +90,7 @@ def find_distance_parameter(data, distance_matrix,
         return
     
     if issparse(data):
-            data = data.toarray()
+        data = data.toarray()
 
     for _ in tqdm(range(max_itterations), disable = quiet):
 
@@ -128,12 +128,8 @@ def _process_cicero_adata_window_subset(cicero_adata_window_subset,
                     max_elements_per_window, pairwise_distances_parameters,
                     find_distance_parameter_parameters = {}, quiet = True):
 
-    #no longer needed for subset windows
-    # sc.pp.filter_cells(cicero_adata_window_subset, min_counts=1)
-    # sc.pp.filter_genes(cicero_adata_window_subset, min_counts=1)
-
     # Filter out windows with no variables or too many variables
-    if (cicero_adata_window_subset.n_vars == 0 or 
+    if (cicero_adata_window_subset.n_vars <= 1 or 
         cicero_adata_window_subset.n_vars > max_elements_per_window or
         cicero_adata_window_subset.n_obs == 0):
         return None
@@ -151,6 +147,7 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
                                          max_elements_per_window=200,
                                          max_itterations=500, seed=0,
                                          dtype = np.int16,
+                                         copy = False,
                                          quiet=True,
                                          find_distance_parameter_parameters={},
                                          pairwise_distances_parameters={},
@@ -166,14 +163,21 @@ def estimate_distance_parameter_parallel(cicero_adata, genomic_ranges,
     windows = genomic_ranges.iloc[window_indices,].values.tolist()
 
     cicero_adata.X = cicero_adata.X.astype(dtype)
+
     cicero_adata_window_subsets = subset_cicero_adata_window(cicero_adata, windows, quiet = quiet)
+    
+    if copy:
+        cicero_adata_window_subsets = [x.copy() for x in tqdm(cicero_adata_window_subsets, desc = "Copying Subsets", disable = quiet)]
+
+    # for cicero_adata_window_subset in tqdm(cicero_adata_window_subsets):
+    #     cicero_adata_window_subset.X = cicero_adata_window_subsets.X.toarray()
 
     func = partial(
         _process_cicero_adata_window_subset,
         max_elements_per_window=max_elements_per_window,
         pairwise_distances_parameters=pairwise_distances_parameters,
         find_distance_parameter_parameters=find_distance_parameter_parameters,
-        quiet = quiet
+        quiet = True
     )
     
     LOGGER.info(f"Starting multiprocessing pool for estimate_distance_parameter_parallel with {n_cpu} processes")
@@ -212,7 +216,7 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
         cicero_adata_window_subset = subset_cicero_adata_window_single(cicero_adata, **window.to_dict())
         cicero_adata_window_subset.X = cicero_adata_window_subset.X.astype(np.float32)
             
-        if (cicero_adata_window_subset.n_vars == 0 or 
+        if (cicero_adata_window_subset.n_vars <= 1 or 
             cicero_adata_window_subset.n_vars > max_elements_per_window or
             cicero_adata_window_subset.n_obs == 0):
                 
