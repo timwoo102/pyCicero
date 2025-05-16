@@ -75,9 +75,14 @@ def generate_genomic_windows(cicero_adata, window_size = 5e5):
     
     return windows_df        
 
-def init_cov(X, jitter = 1e4):
+#set delta to 0 for no adding 
+#original delta is 1e-4 but we can try and auto find one for each cov by using 0.01 % of average variance
+def init_cov(X, delta = 1e-4):
     cov = np.cov(X, rowvar=False)
-    cov[np.diag_indices_from(cov)] += jitter
+
+    if delta is None:
+        delta = 1e-4 * np.trace(cov) / cov.shape[0]
+    cov[np.diag_indices_from(cov)] += delta
     return cov, np.max(np.abs(np.triu(cov)))
 
 #single core - can use cupy pairwise_dist if possible, offers some speedup but not much
