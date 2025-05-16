@@ -22,7 +22,6 @@ from functools import partial
 
 #=====================MAIN====================================================
 
-#quiet really sucks 
 def run_cicero(cicero_adata, quiet = True, copy = False):
 
     LOGGER.info("Generating Windows")
@@ -76,12 +75,17 @@ def generate_genomic_windows(cicero_adata, window_size = 5e5):
     
     return windows_df        
 
+def init_cov(X, jitter = 1e4):
+    cov = np.cov(X, rowvar=False)
+    cov[np.diag_indices_from(cov)] += jitter
+    return cov, np.max(np.abs(np.triu(cov)))
+
 #single core - can use cupy pairwise_dist if possible, offers some speedup but not much
 #Helper for estimate_distance_parameter_parallel
 def find_distance_parameter(data, distance_matrix,
                             s = 0.75, distance_constraint = 2.5e5, distance_parameter_convergence = 1e-22, max_itterations = 100,
                             distance_parameter_min = 0, distance_parameter_max = 2, initial_distance_parameter = 2,
-                            QuicGraphicalLasso_parameters = {"init_method":"cov"},
+                            QuicGraphicalLasso_parameters = {"init_method":init_cov},
                             quiet = True):
     
     curr_distance_parameter = initial_distance_parameter 
@@ -207,7 +211,7 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
                                         max_elements_per_window = 200,
                                         quiet=True,
                                         pairwise_distances_parameters = {},
-                                        QuicGraphicalLasso_parameters = {"init_method":"cov"},
+                                        QuicGraphicalLasso_parameters = {"init_method":init_cov},
                                         partial = True):
     
     qgl_objs = {}
@@ -265,7 +269,7 @@ def assemble_connections(cicero_results, quiet = True):
     good_cicero_results = pd.concat(cicero_results, axis = 0).dropna()
     correlation_dfs = []
 
-    for index, row in tqdm(good_cicero_results.iterrows(), total = good_cicero_results.shape[0], disable = quiet):
+    for index, row in tqdm(good_cicero_results.iterrows(), total = good_cicero_results.shape[0], disable = quiet, desc="Assembling Connections"):
         temp_correlation = row["correlation_matrix"]
         temp_correlation_names = row["peak_names"]
         temp_correlation_df = pd.DataFrame(temp_correlation, index = temp_correlation_names, columns = temp_correlation_names)
