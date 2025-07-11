@@ -1,4 +1,5 @@
 # pyCicero
+Python implentation of Cicero package with QUIC GLASSO solver and multiprocessing
 Check test_run.ipynb for example run
 
   Copyright [2025] [Timothy Woo]
