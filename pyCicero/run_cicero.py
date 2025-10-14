@@ -104,8 +104,9 @@ def find_distance_parameter(data, distance_matrix,
     for _ in tqdm(range(max_itterations), disable = quiet):
 
         rho_mat = get_rho_mat(distance_matrix, curr_distance_parameter, s)
+
         gl_precision_matrix = QuicGraphicalLasso(lam = rho_mat, **QuicGraphicalLasso_parameters).fit(data).precision_
-        
+
         n_big_entries = np.sum(distance_matrix > distance_constraint)
         if( (np.sum(gl_precision_matrix[distance_matrix > distance_constraint] != 0)/n_big_entries > 0.05) or # assures that the amount of long range connections are less than 5%
             (np.sum(gl_precision_matrix == 0)/(gl_precision_matrix.shape[0]**2) < 0.2)):                      # assures that the matrix has at least 20% zeros 

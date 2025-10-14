@@ -8,7 +8,6 @@ from scipy.sparse import coo_matrix
 
 from sklearn.neighbors import NearestNeighbors
 from sklearn.feature_extraction.text import TfidfTransformer
-from sklearn.decomposition import TruncatedSVD #bottle neck with no good gpu implementation for sparse
 
 # if device == "gpu": 
 #     from sklearn.neighbors import NearestNeighbors
@@ -79,15 +78,20 @@ def normalize_expr_data(FM, size_factors, norm_method='log', pseudo_count=None):
 
 def preprocess_cicero(adata: sc.AnnData, 
                       normalize = True,
+                      drop_first_lsa_component = True, #Often the first lsa compoenent is highly correlated with sequencing depth #TODO perhaps add a check to see if it truly is
                       device = "cpu",
                TruncatedSVD_params:  dict = {"n_components":50}, 
                tfidf_params: dict = {"norm":'l2'}, 
                umap_params:  dict = {"n_neighbors":15, "n_components":2, "min_dist":0.5, "n_epochs":int(1e3)}):
     
     if device == "gpu":
+        LOGGER.info("Running UMAP and LSA/LSI on GPU")
+        import cupy as cp
         from cuml.manifold import UMAP
+        from pyCicero.gpu_truncated_svd import TruncatedSVD
     else:
         from umap import UMAP
+        from sklearn.decomposition import TruncatedSVD
 
     TFIDF_KEY = "X_tfidf"
     TSVD_KEY  = "X_tsvd"
@@ -103,7 +107,7 @@ def preprocess_cicero(adata: sc.AnnData,
         data = normalize_expr_data(adata.layers["counts"], size_factors).tocsr()
         adata.layers["data"] = data
         LOGGER.info("Finished Size Factors and Normallization storing normalized sparse matrix into 'data'")
-    elif "data" in adata.layers:
+    elif normalize and "data" in adata.layers:
         LOGGER.info("'data' found in layers. Using it as normalized matrix for downstream processing")
         data = adata.layers["data"]
     else:
@@ -119,6 +123,9 @@ def preprocess_cicero(adata: sc.AnnData,
     LOGGER.info("Running TruncatedSVD")
     tsvd = TruncatedSVD(**TruncatedSVD_params)
     A_transformed = tsvd.fit_transform(X_tfidf)
+    if drop_first_lsa_component: 
+        LOGGER.info("Dropping First LSA Component")
+        A_transformed = A_transformed[:,1:]
     adata.obsm[TSVD_KEY] = A_transformed
     LOGGER.info("Finsihed TruncatedSVD")
 
@@ -129,6 +136,15 @@ def preprocess_cicero(adata: sc.AnnData,
     embedding = umap_model.fit_transform(A_transformed)
     adata.obsm[UMAP_KEY] = embedding
     LOGGER.info("Finsihed UMAP")
+
+    if device == "gpu":
+
+        LOGGER.info("Moving cupy to host")
+        if isinstance(adata.obsm[UMAP_KEY], cp.ndarray):
+            adata.obsm[UMAP_KEY] = cp.asnumpy(adata.obsm[UMAP_KEY])
+        if isinstance(adata.obsm[TSVD_KEY], cp.ndarray):
+            adata.obsm[TSVD_KEY] = cp.asnumpy(adata.obsm[TSVD_KEY])
+        LOGGER.info("Finsihed moving cupy to host")
 
     return adata
 
