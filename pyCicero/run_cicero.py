@@ -22,22 +22,33 @@ from functools import partial
 
 #=====================MAIN====================================================
 
-def run_cicero(cicero_adata, quiet = True, copy = False):
+def run_cicero(cicero_adata, quiet = True, copy = False, n_jobs = None, max_windows_per_batch = None):
+    """Co-accessibility of peaks (Cicero) on an aggregated ("cicero") AnnData.
+
+    cicero_adata: output of preprocess.make_cicero_adata; var needs Chr, Start, End and Mean
+                  (peak midpoint), with peaks sorted by genomic position.
+    n_jobs: worker processes (default: all CPUs). Peaks are split into n_jobs contiguous batches,
+            so windows at batch boundaries depend on n_jobs.
+    max_windows_per_batch: optional cap on the number of 500 kb windows modelled per batch
+            (default: no cap).
+    Returns a DataFrame with columns Peak1, Peak2, coaccess_score.
+    """
+    n_cpu = n_jobs or multiprocessing.cpu_count()
 
     LOGGER.info("Generating Windows")
     genomic_windows_df = generate_genomic_windows(cicero_adata)
     LOGGER.info("Starting distance_parameter_estimation")
-    distance_parameters = estimate_distance_parameter_parallel(cicero_adata, genomic_windows_df, copy = copy, quiet = quiet)
+    distance_parameters = estimate_distance_parameter_parallel(cicero_adata, genomic_windows_df, copy = copy, quiet = quiet, n_cpu = n_cpu)
     LOGGER.info("Finished distance_parameter_estimation")
 
     LOGGER.info("Starting generate_cicero_models")
 
-    n_cpu = multiprocessing.cpu_count()
     batches = n_cpu
     indices = np.linspace(0, cicero_adata.n_vars, batches + 1, dtype=int)
     cicero_adata_batch_subsets = [cicero_adata[:, indices[index]:indices[index + 1]].copy() for index in range(batches)]
 
-    process_subset_with_fixed_param = partial(process_subset, distance_mean=np.mean(distance_parameters), quiet = True)
+    process_subset_with_fixed_param = partial(process_subset, distance_mean=np.mean(distance_parameters), quiet = True,
+                                              max_windows = max_windows_per_batch)
     with multiprocessing.Pool(processes=n_cpu) as pool:
             LOGGER.info(f"Starting Cicero with {n_cpu} processes")
             cicero_results = list(tqdm(pool.imap(process_subset_with_fixed_param, cicero_adata_batch_subsets), total=len(cicero_adata_batch_subsets), disable = quiet))
@@ -218,7 +229,8 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
                                         quiet=True,
                                         pairwise_distances_parameters = {},
                                         QuicGraphicalLasso_parameters = {"init_method":init_cov},
-                                        partial = True):
+                                        partial = True,
+                                        max_windows = None):
     
     qgl_objs = {}
     correlation_matricies = {}
@@ -257,7 +269,7 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
             correlation_matricies[window_index] = cov2cor(qgl_out.covariance_)
         peak_names[window_index] = cicero_adata_window_subset.var_names
         itterations += 1
-        if itterations == 200:
+        if max_windows is not None and itterations >= max_windows:
             break
         
     genomic_windows_df["Fitted_QuicGraphicalLasso_obj"] = pd.Series(qgl_objs)
@@ -265,9 +277,10 @@ def generate_cicero_models(cicero_adata, genomic_windows_df, distance_parameter,
     genomic_windows_df["peak_names"] = pd.Series(peak_names)
     return genomic_windows_df
 
-def process_subset(curr_cicero_adata, distance_mean=0.03, quiet = True):
+def process_subset(curr_cicero_adata, distance_mean=0.03, quiet = True, max_windows = None):
     genomic_windows_df = generate_genomic_windows(curr_cicero_adata)
-    cicero_models = generate_cicero_models(curr_cicero_adata, genomic_windows_df, distance_mean, quiet = quiet)
+    cicero_models = generate_cicero_models(curr_cicero_adata, genomic_windows_df, distance_mean, quiet = quiet,
+                                           max_windows = max_windows)
     return cicero_models
 
 def assemble_connections(cicero_results, quiet = True):

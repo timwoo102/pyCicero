@@ -1,0 +1,15 @@
+__pycache__
+*.pickle
+*.gz
+*.h5ad
+*.bed
+*.egg-info
+test_annotate_peaks.ipynb
+test_correlation.ipynb
+test_faster_subset_window.ipynb
+old_test_run.ipynb
+SC_helpers.py
+build/
+dist/
+.ipynb_checkpoints/
+demo_output/

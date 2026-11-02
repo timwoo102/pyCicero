@@ -1,0 +1,17 @@
+# Reference environment (versions used for development and full-scale runs).
+# After creating it, install skggm with:  bash install/install_skggm.sh   then:  pip install .
+name: pycicero
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11.9
+  - numpy=1.26.4
+  - scipy=1.14.1
+  - pandas=2.2.2
+  - scikit-learn=1.6.1
+  - scanpy=1.10.3
+  - anndata=0.11.4
+  - umap-learn=0.5.7
+  - tqdm=4.66.5
+  - cython<3
+  - pip
